@@ -19,7 +19,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import scienceplots  # noqa: F401
+from numpy.typing import NDArray
 from scipy.integrate import quad
+from scipy.interpolate import CubicSpline
 
 plt.style.use(["science", "grid"])
 
@@ -72,7 +74,7 @@ def rkr(v: int) -> tuple[float, float]:
 
 
 def main() -> None:
-    v_max: int = 50
+    v_max: int = 75
 
     r_mins: list[float] = []
     r_maxs: list[float] = []
@@ -85,8 +87,22 @@ def main() -> None:
         r_maxs.append(r_max)
         energies.append(g(v))
 
-    plt.plot(r_mins, energies, "bo")
-    plt.plot(r_maxs, energies, "ro")
+    r_all: list[float] = r_mins + r_maxs
+    g_all: list[float] = energies + energies
+
+    # The x values in CubicSpline must be listed in increasing order, so sort to ensure this.
+    sorted_indices: NDArray[np.int64] = np.argsort(r_all)
+
+    r_sorted: NDArray[np.float64] = np.array(r_all)[sorted_indices]
+    g_sorted: NDArray[np.float64] = np.array(g_all)[sorted_indices]
+
+    cubic_spline: CubicSpline = CubicSpline(r_sorted, g_sorted)
+    r_spline: NDArray[np.float64] = np.linspace(r_sorted[0], r_sorted[-1], 1000)
+
+    plt.plot(r_spline, cubic_spline(r_spline))
+
+    plt.plot(r_mins, energies, "o")
+    plt.plot(r_maxs, energies, "o")
 
     plt.xlabel(r"Internuclear Distance, $r$ [$\AA$]")
     plt.ylabel(r"Vibrational Energy, $G(v)$ [cm$^{-1}$]")
