@@ -1,6 +1,6 @@
-# rkr
+# rkradial
 
-A Python implementation of the Rydberg-Klein-Rees method.
+A Python implementation of the Rydberg-Klein-Rees method and radial Schrödinger equation.
 
 ## License and Copyright
 
