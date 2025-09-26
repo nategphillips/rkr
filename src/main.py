@@ -20,13 +20,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scienceplots  # noqa: F401
 from numpy.typing import NDArray
-from scipy.integrate import quad
+from scipy.integrate import quad, trapezoid
 from scipy.interpolate import CubicSpline
+from scipy.linalg import eigh
+from scipy.sparse import diags_array
 
 plt.style.use(["science", "grid"])
 
 # Equal to 0.5 * ћ^2 in the appropriate units. Given in "RKR1" by LeRoy.
-factor: float = 16.857629206  # [amu * Å^2 * cm^-1]
+hbar2_over_2: float = 16.857629206  # [amu * Å^2 * cm^-1]
 
 m_carbon: float = 12.011  # [amu]
 m_oxygen: float = 15.999  # [amu]
@@ -62,8 +64,8 @@ def integrand_g(v: int, upper_bound: int) -> float:
 
 
 def rkr(v: int) -> tuple[float, float]:
-    f: float = np.sqrt(factor / mass) * quad(integrand_f, -0.50009, v, args=(v))[0]
-    g: float = np.sqrt(mass / factor) * quad(integrand_g, -0.50009, v, args=(v))[0]
+    f: float = np.sqrt(hbar2_over_2 / mass) * quad(integrand_f, -0.5, v, args=(v))[0]
+    g: float = np.sqrt(mass / hbar2_over_2) * quad(integrand_g, -0.5, v, args=(v))[0]
 
     sqrt_term: float = np.sqrt(f**2 + f / g)
 
@@ -71,6 +73,49 @@ def rkr(v: int) -> tuple[float, float]:
     r_max: float = sqrt_term + f  # [Å]
 
     return r_min, r_max
+
+
+def radial_schrodinger(
+    cubic_spline: CubicSpline,
+    r_min: float,
+    r_max: float,
+    v_max: int,
+    j_qn: int = 0,
+    num_points: int = 1000,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], list[NDArray[np.float64]]]:
+    r: NDArray[np.float64] = np.linspace(r_min, r_max, num_points)
+    dr: float = r[1] - r[0]
+
+    # Construct the kinetic energy operator via a second-order central finite difference. A sparse
+    # array is used to save space.
+    kinetic_term: NDArray[np.float64] = (-hbar2_over_2 / (mass * dr**2)) * diags_array(
+        [1, -2, 1],
+        offsets=[-1, 0, 1],  # pyright: ignore[reportArgumentType]
+        shape=(num_points, num_points),
+    ).toarray()
+
+    # The rotational operator. Not sure if this is needed if I'm only interested in the vibrational
+    # wavefunctions since J = 0 will cancel it out anyway. Might want to check out
+    # https://onlinelibrary.wiley.com/doi/10.1155/2018/1487982.
+    rotational_term: NDArray[np.float64] = (
+        (hbar2_over_2 / (mass * r**2)) * j_qn * (j_qn + 1)
+    )
+
+    potential_term = cubic_spline(r)
+    hamiltonian = kinetic_term + np.diag(rotational_term + potential_term)
+
+    # The Hamiltonian will always be Hermitian, so the use of eigh is warranted here.
+    eigvals, eigvecs = eigh(hamiltonian)
+
+    norm_wavefns: list[NDArray[np.float64]] = []
+
+    # Normalize the wavefunctions ψ(r) such that ∫ ψ'ψ dr = 1.
+    for i in range(v_max):
+        wavefn: NDArray[np.float64] = eigvecs[:, i]
+        norm: float = trapezoid(wavefn**2, r)
+        norm_wavefns.append(wavefn / np.sqrt(norm))
+
+    return eigvals[:v_max], r, norm_wavefns
 
 
 def main() -> None:
@@ -85,7 +130,7 @@ def main() -> None:
 
         r_mins.append(r_min)
         r_maxs.append(r_max)
-        energies.append(g(v))
+        energies.append(b(v) + g(v))
 
     r_all: list[float] = r_mins + r_maxs
     g_all: list[float] = energies + energies
@@ -97,15 +142,21 @@ def main() -> None:
     g_sorted: NDArray[np.float64] = np.array(g_all)[sorted_indices]
 
     cubic_spline: CubicSpline = CubicSpline(r_sorted, g_sorted)
-    r_spline: NDArray[np.float64] = np.linspace(r_sorted[0], r_sorted[-1], 1000)
 
-    plt.plot(r_spline, cubic_spline(r_spline))
+    plt.scatter(r_mins, energies)
+    plt.scatter(r_maxs, energies)
 
-    plt.plot(r_mins, energies, "o")
-    plt.plot(r_maxs, energies, "o")
+    eigvals, r, wavefns = radial_schrodinger(cubic_spline, r_min, r_max, v_max)
+
+    plt.plot(r, cubic_spline(r))
+
+    scaling_factor: int = 500
+
+    for i, psi in enumerate(wavefns):
+        plt.plot(r, psi * scaling_factor + eigvals[i])
 
     plt.xlabel(r"Internuclear Distance, $r$ [$\AA$]")
-    plt.ylabel(r"Vibrational Energy, $G(v)$ [cm$^{-1}$]")
+    plt.ylabel(r"Rovibrational Energy, $B(v) + G(v)$ [cm$^{-1}$]")
     plt.show()
 
 
