@@ -11,7 +11,7 @@ RKR:
 
 Radial:
 
-- [ ] Extrapolate data inward and outward using exponential and/or inverse-power terms
+- [x] Extrapolate data inward and outward using exponential and/or inverse-power terms
 - [ ] Interpolate using piecewise polynomials
 
 ## License and Copyright
