@@ -16,6 +16,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+from collections.abc import Callable
+
 import matplotlib.pyplot as plt
 import numpy as np
 import scienceplots  # noqa: F401
@@ -23,6 +25,7 @@ from numpy.typing import NDArray
 from scipy.integrate import quad, trapezoid
 from scipy.interpolate import CubicSpline
 from scipy.linalg import eigh
+from scipy.optimize import curve_fit
 from scipy.sparse import diags_array
 
 plt.style.use(["science", "grid"])
@@ -35,24 +38,30 @@ m_oxygen: float = 15.999  # [amu]
 
 mass: float = (m_carbon * m_oxygen) / (m_carbon + m_oxygen)
 
+# Constants for CO taken from "Rydberg-Klein-Rees Potential for the X1Σ+ State of the CO Molecule"
+# by Mantz.
+g_consts: list[float] = [
+    2169.81801,
+    -13.2906899,
+    1.09777979e-2,
+    2.29371618e-5,
+    2.10035541e-6,
+    -4.49979099e-8,
+]
+
+b_consts: list[float] = [1.93126515, -1.75054229e-2, 1.81117949e-7]
+
 
 def g(v: int) -> float:
     x: float = v + 0.5
 
-    return (
-        2169.81801 * x
-        - 13.2906899 * x**2
-        + 1.09777979e-2 * x**3
-        + 2.29371618e-5 * x**4
-        + 2.10035541e-6 * x**5
-        - 4.49979099e-8 * x**6
-    )
+    return sum(val * x ** (idx + 1) for idx, val in enumerate(g_consts))
 
 
 def b(v: int) -> float:
     x: float = v + 0.5
 
-    return 1.93126515 - 1.75054229e-2 * x + 1.81117949e-7 * x**2
+    return sum(val * x**idx for idx, val in enumerate(b_consts))
 
 
 def integrand_f(v: int, upper_bound: int) -> float:
@@ -97,9 +106,7 @@ def radial_schrodinger(
     # The rotational operator. Not sure if this is needed if I'm only interested in the vibrational
     # wavefunctions since J = 0 will cancel it out anyway. Might want to check out
     # https://onlinelibrary.wiley.com/doi/10.1155/2018/1487982.
-    rotational_term: NDArray[np.float64] = (
-        (hbar2_over_2 / (mass * r**2)) * j_qn * (j_qn + 1)
-    )
+    rotational_term: NDArray[np.float64] = (hbar2_over_2 / (mass * r**2)) * j_qn * (j_qn + 1)
 
     potential_term = cubic_spline(r)
     hamiltonian = kinetic_term + np.diag(rotational_term + potential_term)
@@ -118,8 +125,61 @@ def radial_schrodinger(
     return eigvals[:v_max], r, norm_wavefns
 
 
+def plot_extrapolation(
+    fit_fn: Callable,
+    xdata: NDArray[np.float64],
+    ydata: NDArray[np.float64],
+    x_min: float,
+    x_max: float,
+) -> None:
+    popt, _, id, _, _ = curve_fit(fit_fn, xdata, ydata, maxfev=20000, full_output=True)
+    print(f"Took {fit_fn.__name__} {id['nfev']} iterations.")
+    xfit = np.linspace(x_min, x_max, 100)
+    yfit = fit_fn(xfit, *popt)
+    plt.plot(xfit, yfit)
+
+
+def extrapolate_inner(r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float64]) -> None:
+    inner_points: NDArray[np.float64] = r_sorted[0:3]
+    inner_energy: NDArray[np.float64] = g_sorted[0:3]
+
+    # LeRoy's LEVEL extrapolates the potential inward with an exponential function fitted to the
+    # first three points.
+    def fit_exp(x, a, b):
+        return a * np.exp(-b * x)
+
+    def fit_inv(x, a, b):
+        return a / x**b
+
+    plot_extrapolation(fit_exp, inner_points, inner_energy, r_sorted[0] - 0.1, r_sorted[0] + 0.1)
+    plot_extrapolation(fit_inv, inner_points, inner_energy, r_sorted[0] - 0.1, r_sorted[0] + 0.1)
+
+
+def extrapolate_outer(r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float64]) -> None:
+    outer_points: NDArray[np.float64] = r_sorted[-3:]
+    outer_energy: NDArray[np.float64] = g_sorted[-3:]
+
+    # The dissociation limit given in Herzberg is D_e = ω_e^2 / (4ω_ex_e), but I'm not sure how
+    # accurate this is when the potential is solved to high vibrational quantum numbers.
+    dissociation: float = g_consts[0] ** 2 / (4 * abs(g_consts[1]))
+
+    # All three of these fit functions are given in the documentation for LeRoy's LEVEL.
+    def fit_exp(x, a, b, c):
+        return dissociation - a * np.exp(-b * (x - c) ** 2)
+
+    def fit_inv(x, a, b):
+        return dissociation - a / x**b
+
+    def fit_mix(x, a, b, c):
+        return dissociation - a * x**b * np.exp(-c * x)
+
+    plot_extrapolation(fit_exp, outer_points, outer_energy, r_sorted[-1] - 0.1, r_sorted[-1] + 1.0)
+    plot_extrapolation(fit_inv, outer_points, outer_energy, r_sorted[-1] - 0.1, r_sorted[-1] + 1.0)
+    plot_extrapolation(fit_mix, outer_points, outer_energy, r_sorted[-1] - 0.1, r_sorted[-1] + 1.0)
+
+
 def main() -> None:
-    v_max: int = 75
+    v_max: int = 50
 
     r_mins: list[float] = []
     r_maxs: list[float] = []
@@ -149,6 +209,9 @@ def main() -> None:
     eigvals, r, wavefns = radial_schrodinger(cubic_spline, r_min, r_max, v_max)
 
     plt.plot(r, cubic_spline(r))
+
+    extrapolate_inner(r_sorted, g_sorted)
+    extrapolate_outer(r_sorted, g_sorted)
 
     scaling_factor: int = 500
 
