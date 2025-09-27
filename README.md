@@ -2,6 +2,18 @@
 
 A Python implementation of the Rydberg-Klein-Rees method and radial Schrödinger equation.
 
+## Roadmap
+
+RKR:
+
+- [ ] Implement iterative subdivision integration for $f$ and $g$
+- [ ] Use Gauss-Mehler and Gauss-Legendre quadrature where appropriate
+
+Radial:
+
+- [ ] Extrapolate data inward and outward using exponential and/or inverse-power terms
+- [ ] Interpolate using piecewise polynomials
+
 ## License and Copyright
 
 Copyright (C) 2025 Nathan G. Phillips
