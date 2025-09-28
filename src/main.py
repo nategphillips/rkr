@@ -33,48 +33,46 @@ plt.style.use(["science", "grid"])
 # Equal to 0.5 * ћ^2 in the appropriate units. Given in "RKR1" by LeRoy.
 hbar2_over_2: float = 16.857629206  # [amu * Å^2 * cm^-1]
 
-m_carbon: float = 12.011  # [amu]
 m_oxygen: float = 15.999  # [amu]
 
-mass: float = (m_carbon * m_oxygen) / (m_carbon + m_oxygen)
+mass: float = (m_oxygen * m_oxygen) / (m_oxygen + m_oxygen)
 
-# Constants for CO taken from "Rydberg-Klein-Rees Potential for the X1Σ+ State of the CO Molecule"
-# by Mantz.
-g_consts: list[float] = [
-    2169.81801,
-    -13.2906899,
-    1.09777979e-2,
-    2.29371618e-5,
-    2.10035541e-6,
-    -4.49979099e-8,
-]
+# Constants for O2 from the NIST Chemistry WebBook.
 
-b_consts: list[float] = [1.93126515, -1.75054229e-2, 1.81117949e-7]
+# [T_e, ω_e, ω_ex_e, ω_ey_e, ...]
+g_consts_up: list[float] = [49793.28, 709.31, -10.65, -0.139]
+# [B_e, α_e, γ_e, ...]
+b_consts_up: list[float] = [0.81902, -0.01206, -5.56e-4]
+
+g_consts_lo: list[float] = [0, 1580.193, -11.981, 0.04747]
+b_consts_lo: list[float] = [1.4376766, -0.01593]
 
 
-def g(v: int) -> float:
+def g(v: int, g_consts: list[float]) -> float:
     x: float = v + 0.5
 
-    return sum(val * x ** (idx + 1) for idx, val in enumerate(g_consts))
+    return sum(val * x**idx for idx, val in enumerate(g_consts))
 
 
-def b(v: int) -> float:
+def b(v: int, b_consts: list[float]) -> float:
     x: float = v + 0.5
 
     return sum(val * x**idx for idx, val in enumerate(b_consts))
 
 
-def integrand_f(v: int, upper_bound: int) -> float:
-    return 1.0 / np.sqrt(g(upper_bound) - g(v))
+def integrand_f(v: int, upper_bound: int, g_consts: list[float]) -> float:
+    return 1.0 / np.sqrt(g(upper_bound, g_consts) - g(v, g_consts))
 
 
-def integrand_g(v: int, upper_bound: int) -> float:
-    return b(v) / np.sqrt(g(upper_bound) - g(v))
+def integrand_g(v: int, upper_bound: int, g_consts: list[float], b_consts: list[float]) -> float:
+    return b(v, b_consts) / np.sqrt(g(upper_bound, g_consts) - g(v, g_consts))
 
 
-def rkr(v: int) -> tuple[float, float]:
-    f: float = np.sqrt(hbar2_over_2 / mass) * quad(integrand_f, -0.5, v, args=(v))[0]
-    g: float = np.sqrt(mass / hbar2_over_2) * quad(integrand_g, -0.5, v, args=(v))[0]
+def rkr(v: int, g_consts: list[float], b_consts: list[float]) -> tuple[float, float]:
+    f: float = np.sqrt(hbar2_over_2 / mass) * quad(integrand_f, -0.5, v, args=(v, g_consts))[0]
+    g: float = (
+        np.sqrt(mass / hbar2_over_2) * quad(integrand_g, -0.5, v, args=(v, g_consts, b_consts))[0]
+    )
 
     sqrt_term: float = np.sqrt(f**2 + f / g)
 
@@ -127,17 +125,17 @@ def plot_extrapolation(
     xdata: NDArray[np.float64],
     ydata: NDArray[np.float64],
 ) -> NDArray[np.float64]:
-    params, _, info, _, _ = curve_fit(fit_fn, xdata, ydata, maxfev=20000, full_output=True)
+    params, _, info, _, _ = curve_fit(fit_fn, xdata, ydata, maxfev=100000, full_output=True)
     print(f"Fit took {info['nfev']} iterations.")
 
     return params
 
 
 def extrapolate_inner(
-    r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float64], fn_type: str = "exp"
+    rkr_sorted: NDArray[np.float64], energies_sorted: NDArray[np.float64], fn_type: str = "exp"
 ) -> tuple[NDArray[np.float64], Callable]:
-    inner_points: NDArray[np.float64] = r_sorted[0:3]
-    inner_energy: NDArray[np.float64] = g_sorted[0:3]
+    inner_points: NDArray[np.float64] = rkr_sorted[0:3]
+    inner_energy: NDArray[np.float64] = energies_sorted[0:3]
 
     # LeRoy's LEVEL extrapolates the potential inward with an exponential function fitted to the
     # first three points.
@@ -155,14 +153,17 @@ def extrapolate_inner(
 
 
 def extrapolate_outer(
-    r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float64], fn_type: str = "exp"
+    rkr_sorted: NDArray[np.float64],
+    energies_sorted: NDArray[np.float64],
+    g_consts: list[float],
+    fn_type: str = "inv",
 ) -> tuple[NDArray[np.float64], Callable]:
-    outer_points: NDArray[np.float64] = r_sorted[-3:]
-    outer_energy: NDArray[np.float64] = g_sorted[-3:]
+    outer_points: NDArray[np.float64] = rkr_sorted[-3:]
+    outer_energy: NDArray[np.float64] = energies_sorted[-3:]
 
     # The dissociation limit given in Herzberg is D_e = ω_e^2 / (4ω_ex_e), but I'm not sure how
     # accurate this is when the potential is solved to high vibrational quantum numbers.
-    dissociation: float = g_consts[0] ** 2 / (4 * abs(g_consts[1]))
+    dissociation: float = g_consts[1] ** 2 / (4 * abs(g_consts[2]))
 
     # All three of these fit functions are given in the documentation for LeRoy's LEVEL.
     def fit(x, a, b, c):
@@ -179,42 +180,53 @@ def extrapolate_outer(
     return params, fit
 
 
-def main() -> None:
-    v_max: int = 50
-    dim: int = 1000
-
-    r_mins: list[float] = []
-    r_maxs: list[float] = []
-    energies: list[float] = []
-
-    plt.scatter(r_mins, energies)
-    plt.scatter(r_maxs, energies)
+def get_bounds(
+    v_max: int, g_consts: list[float], b_consts: list[float]
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    rkr_mins: NDArray[np.float64] = np.empty(v_max)
+    rkr_maxs: NDArray[np.float64] = np.empty(v_max)
+    energies: NDArray[np.float64] = np.empty(v_max)
 
     for v in range(0, v_max):
-        r_min, r_max = rkr(v)
+        r_min, r_max = rkr(v, g_consts, b_consts)
 
-        r_mins.append(r_min)
-        r_maxs.append(r_max)
-        energies.append(b(v) + g(v))
+        rkr_mins[v] = r_min
+        rkr_maxs[v] = r_max
+        energies[v] = b(v, b_consts) + g(v, g_consts)
 
-    r_all: list[float] = r_mins + r_maxs
-    g_all: list[float] = energies + energies
+    plt.scatter(rkr_mins, energies)
+    plt.scatter(rkr_maxs, energies)
+
+    return rkr_mins, rkr_maxs, energies
+
+
+def get_potential(
+    r: NDArray[np.float64],
+    rkr_mins: NDArray[np.float64],
+    rkr_maxs: NDArray[np.float64],
+    energies: NDArray[np.float64],
+    g_consts: list[float],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    rkr_all: NDArray[np.float64] = np.concatenate((rkr_mins, rkr_maxs))
+    energies_all: NDArray[np.float64] = np.concatenate((energies, energies))
 
     # The x values in CubicSpline must be listed in increasing order, so sort to ensure this.
-    sorted_indices: NDArray[np.int64] = np.argsort(r_all)
+    sorted_indices: NDArray[np.int64] = np.argsort(rkr_all)
 
-    r_sorted: NDArray[np.float64] = np.array(r_all)[sorted_indices]
-    g_sorted: NDArray[np.float64] = np.array(g_all)[sorted_indices]
+    rkr_sorted: NDArray[np.float64] = rkr_all[sorted_indices]
+    energies_sorted: NDArray[np.float64] = energies_all[sorted_indices]
 
-    cubic_spline: CubicSpline = CubicSpline(r_sorted, g_sorted)
-    r: NDArray[np.float64] = np.linspace(r_min - 0.2, r_max + 2, dim)
+    cubic_spline: CubicSpline = CubicSpline(rkr_sorted, energies_sorted)
 
-    params_inner, fit_innter = extrapolate_inner(r_sorted, g_sorted)
-    params_outer, fit_outer = extrapolate_outer(r_sorted, g_sorted)
+    params_inner, fit_innter = extrapolate_inner(rkr_sorted, energies_sorted)
+    params_outer, fit_outer = extrapolate_outer(rkr_sorted, energies_sorted, g_consts)
 
-    lmask: NDArray[np.bool] = r < r_min
-    mmask: NDArray[np.bool] = (r >= r_min) & (r <= r_max)
-    rmask: NDArray[np.bool] = r > r_max
+    rkr_min: float = rkr_sorted[0]
+    rkr_max: float = rkr_sorted[-1]
+
+    lmask: NDArray[np.bool] = r < rkr_min
+    mmask: NDArray[np.bool] = (r >= rkr_min) & (r <= rkr_max)
+    rmask: NDArray[np.bool] = r > rkr_max
 
     potential: NDArray[np.float64] = np.empty_like(r)
 
@@ -226,12 +238,36 @@ def main() -> None:
     plt.plot(r[mmask], potential[mmask], color="black")
     plt.plot(r[rmask], potential[rmask], color="red")
 
-    eigvals, wavefns = radial_schrodinger(r, v_max, potential, dim)
+    return r, potential
+
+
+def main() -> None:
+    v_max_up: int = 15
+    v_max_lo: int = 40
+
+    dim: int = 1000
+
+    rkr_mins_up, rkr_maxs_up, energies_up = get_bounds(v_max_up, g_consts_up, b_consts_up)
+    rkr_mins_lo, rkr_maxs_lo, energies_lo = get_bounds(v_max_lo, g_consts_lo, b_consts_lo)
+
+    r_min: float = min(rkr_mins_up.min(), rkr_mins_lo.min())
+    r_max: float = max(rkr_maxs_up.max(), rkr_maxs_lo.max())
+
+    r: NDArray[np.float64] = np.linspace(r_min, r_max, dim)
+
+    r_up, potential_up = get_potential(r, rkr_mins_up, rkr_maxs_up, energies_up, g_consts_up)
+    r_lo, potential_lo = get_potential(r, rkr_mins_lo, rkr_maxs_lo, energies_lo, g_consts_lo)
+
+    eigvals_up, wavefns_up = radial_schrodinger(r_up, v_max_up, potential_up, dim)
+    eigvals_lo, wavefns_lo = radial_schrodinger(r_lo, v_max_lo, potential_lo, dim)
 
     scaling_factor: int = 500
 
-    for i, psi in enumerate(wavefns):
-        plt.plot(r, psi * scaling_factor + eigvals[i])
+    for i, psi in enumerate(wavefns_up):
+        plt.plot(r_up, psi * scaling_factor + eigvals_up[i])
+
+    for i, psi in enumerate(wavefns_lo):
+        plt.plot(r_lo, psi * scaling_factor + eigvals_lo[i])
 
     plt.xlabel(r"Internuclear Distance, $r$ [$\AA$]")
     plt.ylabel(r"Rovibrational Energy, $B(v) + G(v)$ [cm$^{-1}$]")
