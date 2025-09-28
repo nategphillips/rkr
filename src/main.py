@@ -29,6 +29,7 @@ from scipy.optimize import curve_fit
 from scipy.sparse import diags_array
 
 plt.style.use(["science", "grid"])
+plt.rcParams.update({"font.size": 22})
 
 # Equal to 0.5 * ћ^2 in the appropriate units. Given in "RKR1" by LeRoy.
 hbar2_over_2: float = 16.857629206  # [amu * Å^2 * cm^-1]
@@ -192,7 +193,7 @@ def get_bounds(
 
         rkr_mins[v] = r_min
         rkr_maxs[v] = r_max
-        energies[v] = b(v, b_consts) + g(v, g_consts)
+        energies[v] = g(v, g_consts)
 
     plt.scatter(rkr_mins, energies)
     plt.scatter(rkr_maxs, energies)
@@ -242,8 +243,8 @@ def get_potential(
 
 
 def main() -> None:
-    v_max_up: int = 15
-    v_max_lo: int = 40
+    v_max_up: int = 16
+    v_max_lo: int = 19
 
     dim: int = 1000
 
@@ -270,7 +271,36 @@ def main() -> None:
         plt.plot(r_lo, psi * scaling_factor + eigvals_lo[i])
 
     plt.xlabel(r"Internuclear Distance, $r$ [$\AA$]")
-    plt.ylabel(r"Rovibrational Energy, $B(v) + G(v)$ [cm$^{-1}$]")
+    plt.ylabel(r"Vibrational Energy, $G(v)$ [cm$^{-1}$]")
+    plt.show()
+
+    # Compute Franck-Condon factors and compare with known data from Cheung.
+    fcfs: NDArray[np.float64] = np.zeros((v_max_up, v_max_lo))
+
+    for i in range(v_max_up):
+        for j in range(v_max_lo):
+            fcfs[i][j] = np.abs(trapezoid(wavefns_up[i] * wavefns_lo[j], r_up)) ** 2
+
+    cheung: NDArray[np.float64] = np.genfromtxt("../data/cheung.csv", delimiter=",")
+
+    fig, axs = plt.subplots(1, 2)
+    axs[0].set_title("Simulation")
+    axs[0].imshow(fcfs, origin="lower")
+
+    axs[1].set_title("Cheung")
+    im = axs[1].imshow(cheung, origin="lower")
+
+    for ax, data in zip(axs, [fcfs, cheung]):
+        x_range: range = range(data.shape[1])
+        y_range: range = range(data.shape[0])
+        ax.set_xticks(x_range, labels=x_range)
+        ax.set_yticks(y_range, labels=y_range)
+        ax.set(xlabel="$v''$", ylabel="$v'$")
+
+    for ax in axs.flat:
+        ax.set(xlabel="$v''$", ylabel="$v'$")
+
+    fig.colorbar(im, ax=axs, orientation="horizontal", fraction=0.05, label="Overlap Integral")
     plt.show()
 
 

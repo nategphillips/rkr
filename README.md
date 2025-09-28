@@ -12,6 +12,7 @@ RKR:
 Radial:
 
 - [x] Extrapolate data inward and outward using exponential and/or inverse-power terms
+- [x] Compute Franck-Condon factors from wavefunction overlaps
 - [ ] Interpolate using piecewise polynomials
 
 ## License and Copyright
