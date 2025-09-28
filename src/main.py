@@ -85,14 +85,12 @@ def rkr(v: int) -> tuple[float, float]:
 
 
 def radial_schrodinger(
-    cubic_spline: CubicSpline,
-    r_min: float,
-    r_max: float,
+    r: NDArray[np.float64],
     v_max: int,
+    potential_term: NDArray,
+    dim: int,
     j_qn: int = 0,
-    num_points: int = 1000,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], list[NDArray[np.float64]]]:
-    r: NDArray[np.float64] = np.linspace(r_min, r_max, num_points)
+) -> tuple[NDArray[np.float64], list[NDArray[np.float64]]]:
     dr: float = r[1] - r[0]
 
     # Construct the kinetic energy operator via a second-order central finite difference. A sparse
@@ -100,7 +98,7 @@ def radial_schrodinger(
     kinetic_term: NDArray[np.float64] = (-hbar2_over_2 / (mass * dr**2)) * diags_array(
         [1, -2, 1],
         offsets=[-1, 0, 1],  # pyright: ignore[reportArgumentType]
-        shape=(num_points, num_points),
+        shape=(dim, dim),
     ).toarray()
 
     # The rotational operator. Not sure if this is needed if I'm only interested in the vibrational
@@ -108,7 +106,6 @@ def radial_schrodinger(
     # https://onlinelibrary.wiley.com/doi/10.1155/2018/1487982.
     rotational_term: NDArray[np.float64] = (hbar2_over_2 / (mass * r**2)) * j_qn * (j_qn + 1)
 
-    potential_term = cubic_spline(r)
     hamiltonian = kinetic_term + np.diag(rotational_term + potential_term)
 
     # The Hamiltonian will always be Hermitian, so the use of eigh is warranted here.
@@ -122,40 +119,44 @@ def radial_schrodinger(
         norm: float = trapezoid(wavefn**2, r)
         norm_wavefns.append(wavefn / np.sqrt(norm))
 
-    return eigvals[:v_max], r, norm_wavefns
+    return eigvals[:v_max], norm_wavefns
 
 
 def plot_extrapolation(
     fit_fn: Callable,
     xdata: NDArray[np.float64],
     ydata: NDArray[np.float64],
-    x_min: float,
-    x_max: float,
-) -> None:
-    popt, _, id, _, _ = curve_fit(fit_fn, xdata, ydata, maxfev=20000, full_output=True)
-    print(f"Took {fit_fn.__name__} {id['nfev']} iterations.")
-    xfit = np.linspace(x_min, x_max, 100)
-    yfit = fit_fn(xfit, *popt)
-    plt.plot(xfit, yfit)
+) -> NDArray[np.float64]:
+    params, _, info, _, _ = curve_fit(fit_fn, xdata, ydata, maxfev=20000, full_output=True)
+    print(f"Fit took {info['nfev']} iterations.")
+
+    return params
 
 
-def extrapolate_inner(r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float64]) -> None:
+def extrapolate_inner(
+    r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float64], fn_type: str = "exp"
+) -> tuple[NDArray[np.float64], Callable]:
     inner_points: NDArray[np.float64] = r_sorted[0:3]
     inner_energy: NDArray[np.float64] = g_sorted[0:3]
 
     # LeRoy's LEVEL extrapolates the potential inward with an exponential function fitted to the
     # first three points.
-    def fit_exp(x, a, b):
-        return a * np.exp(-b * x)
+    def fit(x, a, b):
+        match fn_type:
+            case "exp":
+                return a * np.exp(-b * x)
 
-    def fit_inv(x, a, b):
-        return a / x**b
+            case "inv":
+                return a / x**b
 
-    plot_extrapolation(fit_exp, inner_points, inner_energy, r_sorted[0] - 0.1, r_sorted[0] + 0.1)
-    plot_extrapolation(fit_inv, inner_points, inner_energy, r_sorted[0] - 0.1, r_sorted[0] + 0.1)
+    params: NDArray[np.float64] = plot_extrapolation(fit, inner_points, inner_energy)
+
+    return params, fit
 
 
-def extrapolate_outer(r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float64]) -> None:
+def extrapolate_outer(
+    r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float64], fn_type: str = "exp"
+) -> tuple[NDArray[np.float64], Callable]:
     outer_points: NDArray[np.float64] = r_sorted[-3:]
     outer_energy: NDArray[np.float64] = g_sorted[-3:]
 
@@ -164,26 +165,30 @@ def extrapolate_outer(r_sorted: NDArray[np.float64], g_sorted: NDArray[np.float6
     dissociation: float = g_consts[0] ** 2 / (4 * abs(g_consts[1]))
 
     # All three of these fit functions are given in the documentation for LeRoy's LEVEL.
-    def fit_exp(x, a, b, c):
-        return dissociation - a * np.exp(-b * (x - c) ** 2)
+    def fit(x, a, b, c):
+        match fn_type:
+            case "exp":
+                return dissociation - a * np.exp(-b * (x - c) ** 2)
+            case "inv":
+                return dissociation - a / x**b
+            case "mix":
+                return dissociation - a * x**b * np.exp(-c * x)
 
-    def fit_inv(x, a, b):
-        return dissociation - a / x**b
+    params: NDArray[np.float64] = plot_extrapolation(fit, outer_points, outer_energy)
 
-    def fit_mix(x, a, b, c):
-        return dissociation - a * x**b * np.exp(-c * x)
-
-    plot_extrapolation(fit_exp, outer_points, outer_energy, r_sorted[-1] - 0.1, r_sorted[-1] + 1.0)
-    plot_extrapolation(fit_inv, outer_points, outer_energy, r_sorted[-1] - 0.1, r_sorted[-1] + 1.0)
-    plot_extrapolation(fit_mix, outer_points, outer_energy, r_sorted[-1] - 0.1, r_sorted[-1] + 1.0)
+    return params, fit
 
 
 def main() -> None:
     v_max: int = 50
+    dim: int = 1000
 
     r_mins: list[float] = []
     r_maxs: list[float] = []
     energies: list[float] = []
+
+    plt.scatter(r_mins, energies)
+    plt.scatter(r_maxs, energies)
 
     for v in range(0, v_max):
         r_min, r_max = rkr(v)
@@ -202,16 +207,26 @@ def main() -> None:
     g_sorted: NDArray[np.float64] = np.array(g_all)[sorted_indices]
 
     cubic_spline: CubicSpline = CubicSpline(r_sorted, g_sorted)
+    r: NDArray[np.float64] = np.linspace(r_min - 0.2, r_max + 2, dim)
 
-    plt.scatter(r_mins, energies)
-    plt.scatter(r_maxs, energies)
+    params_inner, fit_innter = extrapolate_inner(r_sorted, g_sorted)
+    params_outer, fit_outer = extrapolate_outer(r_sorted, g_sorted)
 
-    eigvals, r, wavefns = radial_schrodinger(cubic_spline, r_min, r_max, v_max)
+    lmask: NDArray[np.bool] = r < r_min
+    mmask: NDArray[np.bool] = (r >= r_min) & (r <= r_max)
+    rmask: NDArray[np.bool] = r > r_max
 
-    plt.plot(r, cubic_spline(r))
+    potential: NDArray[np.float64] = np.empty_like(r)
 
-    extrapolate_inner(r_sorted, g_sorted)
-    extrapolate_outer(r_sorted, g_sorted)
+    potential[lmask] = fit_innter(r[lmask], *params_inner)
+    potential[mmask] = cubic_spline(r[mmask])
+    potential[rmask] = fit_outer(r[rmask], *params_outer)
+
+    plt.plot(r[lmask], potential[lmask], color="blue")
+    plt.plot(r[mmask], potential[mmask], color="black")
+    plt.plot(r[rmask], potential[rmask], color="red")
+
+    eigvals, wavefns = radial_schrodinger(r, v_max, potential, dim)
 
     scaling_factor: int = 500
 
