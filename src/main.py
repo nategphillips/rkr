@@ -219,7 +219,7 @@ def get_potential(
 
     cubic_spline: CubicSpline = CubicSpline(rkr_sorted, energies_sorted)
 
-    params_inner, fit_innter = extrapolate_inner(rkr_sorted, energies_sorted)
+    params_inner, fit_inner = extrapolate_inner(rkr_sorted, energies_sorted)
     params_outer, fit_outer = extrapolate_outer(rkr_sorted, energies_sorted, g_consts)
 
     rkr_min: float = rkr_sorted[0]
@@ -231,7 +231,7 @@ def get_potential(
 
     potential: NDArray[np.float64] = np.empty_like(r)
 
-    potential[lmask] = fit_innter(r[lmask], *params_inner)
+    potential[lmask] = fit_inner(r[lmask], *params_inner)
     potential[mmask] = cubic_spline(r[mmask])
     potential[rmask] = fit_outer(r[rmask], *params_outer)
 
@@ -295,9 +295,6 @@ def main() -> None:
         y_range: range = range(data.shape[0])
         ax.set_xticks(x_range, labels=x_range)
         ax.set_yticks(y_range, labels=y_range)
-        ax.set(xlabel="$v''$", ylabel="$v'$")
-
-    for ax in axs.flat:
         ax.set(xlabel="$v''$", ylabel="$v'$")
 
     fig.colorbar(im, ax=axs, orientation="horizontal", fraction=0.05, label="Overlap Integral")
