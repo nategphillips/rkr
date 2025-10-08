@@ -1,18 +1,18 @@
-# rkradial
+# RKRadial 
 
-A Python implementation of the Rydberg-Klein-Rees method and radial Schrödinger equation.
+A Python implementation of the Rydberg–Klein–Rees method and radial Schrödinger equation.
 
 ## Roadmap
 
 RKR:
 
 - [ ] Implement iterative subdivision integration for $f$ and $g$
-- [ ] Use Gauss-Mehler and Gauss-Legendre quadrature where appropriate
+- [ ] Use Gauss–Mehler and Gauss–Legendre quadrature where appropriate
 
 Radial:
 
 - [x] Extrapolate data inward and outward using exponential and/or inverse-power terms
-- [x] Compute Franck-Condon factors from wavefunction overlaps
+- [x] Compute Franck–Condon factors from wavefunction overlaps
 - [ ] Interpolate using piecewise polynomials
 
 ## License and Copyright
